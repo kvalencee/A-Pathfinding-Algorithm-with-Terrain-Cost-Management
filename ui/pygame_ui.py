@@ -13,7 +13,10 @@ COLORES = {
     'agente': (255, 0, 0),
     'objetivo': (0, 255, 0),
     'texto': (255, 255, 255),
-    'borde': (0, 0, 0)
+    'borde': (0, 0, 0),
+    'nodo_abierto': (0, 255, 255),  # Cian para nodos abiertos
+    'nodo_cerrado': (255, 165, 0),  # Naranja para nodos cerrados
+    'camino': (255, 215, 0)  # Dorado para el camino solución
 }
 
 
@@ -35,7 +38,7 @@ def inicializar_ui(laberinto, titulo="Exploración de Agente"):
 
     # Ventana más ancha para mostrar ambos mapas
     width = map_width * 2 + margin * 3
-    height = map_height + margin * 2 + 100  # Espacio adicional para información
+    height = map_height + margin * 2 + 250  # Espacio adicional para información
 
     pygame.init()
     screen = pygame.display.set_mode((width, height))
@@ -46,45 +49,71 @@ def inicializar_ui(laberinto, titulo="Exploración de Agente"):
     return screen, font, title_font, cell_size, margin
 
 
-def dibujar_mapa(screen, laberinto, problema, font, cell_size, x_offset, margin, mostrar_heuristica=True):
+def dibujar_mapa(screen, laberinto, problema, font, cell_size, x_offset, margin,
+                 mostrar_heuristica=True, nodos_abiertos=None, nodos_cerrados=None):
+    nodos_abiertos = nodos_abiertos or set()
+    nodos_cerrados = nodos_cerrados or set()
+
     for fila in range(len(laberinto)):
         for columna in range(len(laberinto[0])):
             x = x_offset + columna * cell_size
             y = margin + fila * cell_size
             rect = pygame.Rect(x, y, cell_size, cell_size)
 
-            # Celda oculta o visible
-            if problema.mapa_visible[fila][columna]:
-                color = COLORES[laberinto[fila][columna]]
-
-                # Resaltar camino solución
-                if any((fila, columna) == (e.fila, e.columna) for e in problema.camino_solucion):
-                    color = (min(color[0] + 40, 255), min(color[1] + 40, 255), min(color[2] + 40, 255))
-
-                # Mostrar heurística
-                if mostrar_heuristica:
-                    estado = Estado(fila, columna)
-                    h = problema.heuristica(estado)
-                    texto = font.render(str(h), True, COLORES['texto'])
-            else:
-                color = COLORES['oculto']
-                texto = None
-
+            # Color base del terreno
+            color = COLORES[laberinto[fila][columna]] if problema.mapa_visible[fila][columna] else COLORES['oculto']
             pygame.draw.rect(screen, color, rect)
+
+            # Estado actual
+            estado = Estado(fila, columna)
+            es_abierto = estado in nodos_abiertos
+            es_cerrado = estado in nodos_cerrados
+
+            # Mostrar heurística en celdas visibles
+            if problema.mapa_visible[fila][columna] and mostrar_heuristica:  # Cambiado de mostrar_info a mostrar_heuristica
+                h = problema.heuristica(estado)
+                texto_h = font.render(str(h), True, COLORES['texto'])
+                screen.blit(texto_h, (x + 5, y + 5))
+
+                # Marcadores de nodos
+                if es_abierto:
+                    pygame.draw.rect(screen, COLORES['nodo_abierto'],
+                                   (x + cell_size - 20, y + 5, 15, 15))
+                    texto_o = font.render("O", True, (0, 0, 0))
+                    screen.blit(texto_o, (x + cell_size - 18, y + 5))
+                elif es_cerrado:
+                    pygame.draw.rect(screen, COLORES['nodo_cerrado'],
+                                   (x + cell_size - 20, y + 5, 15, 15))
+                    texto_x = font.render("X", True, (0, 0, 0))
+                    screen.blit(texto_x, (x + cell_size - 18, y + 5))
+
             pygame.draw.rect(screen, COLORES['borde'], rect, 1)
+def dibujar_informacion(screen, problema, font, title_font, width, margin, y_offset):
+    """Muestra la información del agente, controles y costo acumulado"""
+    # Título del agente
+    titulo = title_font.render(f"Agente: {problema.agente.nombre}", True, COLORES['texto'])
+    screen.blit(titulo, (margin, y_offset))
 
-            if texto:
-                text_rect = texto.get_rect(center=(x + cell_size // 2, y + cell_size // 2))
-                screen.blit(texto, text_rect)
+    # Información de posición
+    estado = problema.estado_actual if hasattr(problema, 'estado_actual') else problema.estado_inicial
+    info_pos = font.render(
+        f"Posición: ({estado.fila}, {estado.columna}) | Dirección: {estado.direccion}",
+        True,
+        COLORES['texto']
+    )
+    screen.blit(info_pos, (margin, y_offset + 30))
 
-    # Dibujar agente
-    estado_actual = getattr(problema, 'estado_actual', problema.estado_inicial)
-    dibujar_agente(screen, estado_actual, cell_size, x_offset, margin)
+    # Costo acumulado
+    if hasattr(problema, 'camino_solucion') and problema.camino_solucion:
+        costo_total = sum(
+            problema.agente.costo_movimiento(problema.laberinto[e.fila][e.columna])
+            for e in problema.camino_solucion[1:]
+        )
+        texto_costo = font.render(f"Costo total del camino: {costo_total}", True, COLORES['texto'])
+    else:
+        texto_costo = font.render(f"Costo acumulado: {getattr(problema, 'costo_acumulado', 0)}", True, COLORES['texto'])
+    screen.blit(texto_costo, (margin, y_offset + 60))
 
-    # Dibujar objetivos si son visibles
-    for objetivo in problema.estados_objetivos:
-        if problema.mapa_visible[objetivo.fila][objetivo.columna]:
-            dibujar_objetivo(screen, objetivo, cell_size, x_offset, margin)
 
 def dibujar_objetivo(screen, objetivo, cell_size, x_offset, margin):
     """Dibuja un objetivo en el mapa
@@ -162,88 +191,6 @@ def dibujar_agente(screen, estado, cell_size, x_offset, margin):
 
     pygame.draw.polygon(screen, COLORES['borde'], puntos)
 
-
-def dibujar_mapa(screen, laberinto, problema, font, cell_size, x_offset, margin, mostrar_heuristica=True):
-    """Dibuja el mapa con el estado actual de exploración"""
-    for fila in range(len(laberinto)):
-        for columna in range(len(laberinto[0])):
-            # Inicializar variables
-            texto = None  # Siempre inicializada
-            x = x_offset + columna * cell_size
-            y = margin + fila * cell_size
-            rect = pygame.Rect(x, y, cell_size, cell_size)
-
-            # Determinar color y contenido
-            if problema.mapa_visible[fila][columna]:
-                color = COLORES[laberinto[fila][columna]]
-
-                # Mostrar heurística si está habilitado
-                if mostrar_heuristica:
-                    try:
-                        estado = Estado(fila, columna)
-                        h = problema.heuristica(estado)
-                        texto = font.render(str(h), True, COLORES['texto'])
-                    except:
-                        texto = None
-            else:
-                color = COLORES['oculto']
-
-            # Dibujar celda
-            pygame.draw.rect(screen, color, rect)
-            pygame.draw.rect(screen, COLORES['borde'], rect, 1)
-
-            # Dibujar texto si existe
-            if texto is not None:
-                text_rect = texto.get_rect(center=(x + cell_size // 2, y + cell_size // 2))
-                screen.blit(texto, text_rect)
-
-    # Dibujar agente (siempre visible en su mapa)
-    estado_actual = getattr(problema, 'estado_actual', problema.estado_inicial)
-    dibujar_agente(screen, estado_actual, cell_size, x_offset, margin)
-
-    # Dibujar objetivos visibles
-    for objetivo in problema.estados_objetivos:
-        if problema.mapa_visible[objetivo.fila][objetivo.columna]:
-            dibujar_objetivo(screen, objetivo, cell_size, x_offset, margin)
-def dibujar_informacion(screen, problema, font, title_font, width, margin, y_offset):
-    """Muestra la información del agente y controles
-    Args:
-        screen: Superficie de Pygame
-        problema: Objeto Problema
-        font: Fuente normal
-        title_font: Fuente para títulos
-        width: Ancho de la ventana
-        margin: Margen lateral
-        y_offset: Posición vertical inicial
-    """
-    # Título del agente
-    titulo = title_font.render(f"Agente: {problema.agente.nombre}", True, COLORES['texto'])
-    screen.blit(titulo, (margin, y_offset))
-
-    # Información de posición
-    estado = problema.estado_actual if hasattr(problema, 'estado_actual') else problema.estado_inicial
-    info_pos = font.render(
-        f"Posición: ({estado.fila}, {estado.columna}) | Dirección: {estado.direccion}",
-        True,
-        COLORES['texto']
-    )
-    screen.blit(info_pos, (margin, y_offset + 30))
-
-    # Costo acumulado
-    costo = font.render(
-        f"Costo acumulado: {getattr(problema, 'costo_acumulado', 0)}",
-        True,
-        COLORES['texto']
-    )
-    screen.blit(costo, (margin, y_offset + 60))
-
-    # Controles
-    controles = font.render(
-        "Controles: ESPACIO=Pausa/Continuar | R=Reiniciar | ESC=Salir",
-        True,
-        COLORES['texto']
-    )
-    screen.blit(controles, (width // 2 - controles.get_width() // 2, y_offset + 90))
 
 
 def esperar_tecla():

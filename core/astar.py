@@ -4,39 +4,63 @@ from collections import defaultdict
 
 def a_estrella(problema):
     frontera = []
-    # Usamos un contador para evitar comparar Estados directamente
-    contador = 0
-    heapq.heappush(frontera, (0, contador, problema.estado_inicial))
-    contador += 1
+    heapq.heappush(frontera, (0, 0, problema.estado_inicial))
 
     came_from = {}
-    costo_acumulado = defaultdict(lambda: float('inf'))
-    costo_acumulado[problema.estado_inicial] = 0
+    g_score = {problema.estado_inicial: 0}
+    f_score = {problema.estado_inicial: problema.heuristica(problema.estado_inicial)}
 
-    costo_estimado = defaultdict(lambda: float('inf'))
-    costo_estimado[problema.estado_inicial] = problema.heuristica(problema.estado_inicial)
+    open_set = {problema.estado_inicial}
+    closed_set = set()
+    orden_exploracion = []
+    arbol_busqueda = defaultdict(list)
+    contador = 1  # Para mantener un orden consistente en el heap
 
     while frontera:
-        _, _, estado_actual = heapq.heappop(frontera)
+        _, _, current = heapq.heappop(frontera)
 
-        if problema.es_objetivo(estado_actual):
+        if current not in open_set:
+            continue
+
+        if problema.es_objetivo(current):
+            # Reconstruir camino
             camino = []
-            while estado_actual in came_from:
-                camino.append(estado_actual)
-                estado_actual = came_from[estado_actual]
+            while current in came_from:
+                camino.append(current)
+                current = came_from[current]
             camino.append(problema.estado_inicial)
             camino.reverse()
-            return camino
 
-        for accion, estado_siguiente in problema.obtener_acciones(estado_actual):
-            nuevo_costo = costo_acumulado[estado_actual] + accion.costo
+            # Calcular costo total correctamente
+            costo_total = sum(
+                problema.agente.costo_movimiento(problema.laberinto[e.fila][e.columna])
+                for e in camino[1:]
+            )
+            problema.costo_acumulado = costo_total
 
-            if nuevo_costo < costo_acumulado[estado_siguiente]:
-                came_from[estado_siguiente] = estado_actual
-                costo_acumulado[estado_siguiente] = nuevo_costo
-                estimado = nuevo_costo + problema.heuristica(estado_siguiente)
-                heapq.heappush(frontera, (estimado, contador, estado_siguiente))
+            return camino, open_set, closed_set, orden_exploracion, arbol_busqueda
+
+        open_set.remove(current)
+        closed_set.add(current)
+        orden_exploracion.append(('cerrado', current))
+
+        for accion, neighbor in problema.obtener_acciones(current):
+            if neighbor in closed_set:
+                continue
+
+            tentative_g = g_score[current] + accion.costo
+
+            if neighbor not in open_set:
+                open_set.add(neighbor)
+                orden_exploracion.append(('abierto', neighbor))
+                arbol_busqueda[current].append(neighbor)
+                heapq.heappush(frontera, (tentative_g + problema.heuristica(neighbor), contador, neighbor))
                 contador += 1
-                costo_estimado[estado_siguiente] = estimado
+            elif tentative_g >= g_score.get(neighbor, float('inf')):
+                continue
 
-    return None
+            came_from[neighbor] = current
+            g_score[neighbor] = tentative_g
+            f_score[neighbor] = tentative_g + problema.heuristica(neighbor)
+
+    return None, open_set, closed_set, orden_exploracion, arbol_busqueda
