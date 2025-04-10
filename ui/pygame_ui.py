@@ -64,30 +64,57 @@ def dibujar_mapa(screen, laberinto, problema, font, cell_size, x_offset, margin,
             color = COLORES[laberinto[fila][columna]] if problema.mapa_visible[fila][columna] else COLORES['oculto']
             pygame.draw.rect(screen, color, rect)
 
-            # Estado actual
-            estado = Estado(fila, columna)
-            es_abierto = estado in nodos_abiertos
-            es_cerrado = estado in nodos_cerrados
+            # Estado actual para verificar abiertos y cerrados
+            estado_actual = None
+            for estado in nodos_abiertos:
+                if estado.fila == fila and estado.columna == columna:
+                    estado_actual = estado
+                    break
 
-            # Mostrar heurística en celdas visibles
-            if problema.mapa_visible[fila][columna] and mostrar_heuristica:  # Cambiado de mostrar_info a mostrar_heuristica
+            if not estado_actual:
+                for estado in nodos_cerrados:
+                    if estado.fila == fila and estado.columna == columna:
+                        estado_actual = estado
+                        break
+
+            # Verificar si es un nodo abierto o cerrado (independiente de la dirección)
+            es_abierto = False
+            es_cerrado = False
+
+            for estado in nodos_abiertos:
+                if estado.fila == fila and estado.columna == columna:
+                    es_abierto = True
+                    break
+
+            for estado in nodos_cerrados:
+                if estado.fila == fila and estado.columna == columna:
+                    es_cerrado = True
+                    break
+
+            # Mostrar información en celdas visibles
+            if problema.mapa_visible[fila][columna]:
+                estado = Estado(fila, columna)
                 h = problema.heuristica(estado)
-                texto_h = font.render(str(h), True, COLORES['texto'])
-                screen.blit(texto_h, (x + 5, y + 5))
+
+                # Mostrar heurística si está activada
+                if mostrar_heuristica:
+                    texto_h = font.render(str(h), True, COLORES['texto'])
+                    screen.blit(texto_h, (x + 5, y + 5))
 
                 # Marcadores de nodos
                 if es_abierto:
                     pygame.draw.rect(screen, COLORES['nodo_abierto'],
-                                   (x + cell_size - 20, y + 5, 15, 15))
+                                     (x + cell_size - 20, y + 5, 15, 15))
                     texto_o = font.render("O", True, (0, 0, 0))
                     screen.blit(texto_o, (x + cell_size - 18, y + 5))
                 elif es_cerrado:
                     pygame.draw.rect(screen, COLORES['nodo_cerrado'],
-                                   (x + cell_size - 20, y + 5, 15, 15))
+                                     (x + cell_size - 20, y + 5, 15, 15))
                     texto_x = font.render("X", True, (0, 0, 0))
                     screen.blit(texto_x, (x + cell_size - 18, y + 5))
 
             pygame.draw.rect(screen, COLORES['borde'], rect, 1)
+
 def dibujar_informacion(screen, problema, font, title_font, width, margin, y_offset):
     """Muestra la información del agente, controles y costo acumulado"""
     # Título del agente

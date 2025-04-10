@@ -2,65 +2,86 @@ import heapq
 from collections import defaultdict
 
 
-def a_estrella(problema):
+def a_estrella_corregido(problema):
     frontera = []
-    heapq.heappush(frontera, (0, 0, problema.estado_inicial))
+    # Inicializar con (f_score, contador, estado_inicial)
+    heapq.heappush(frontera, (problema.heuristica(problema.estado_inicial), 0, problema.estado_inicial))
 
-    came_from = {}
-    g_score = {problema.estado_inicial: 0}
-    f_score = {problema.estado_inicial: problema.heuristica(problema.estado_inicial)}
+    came_from = {}  # Para reconstruir el camino
+    g_score = {problema.estado_inicial: 0}  # Costo real desde el inicio hasta cada nodo
 
-    open_set = {problema.estado_inicial}
+    en_frontera = {problema.estado_inicial}
     closed_set = set()
     orden_exploracion = []
+    orden_exploracion.append(('abierto', problema.estado_inicial))  # Añadir estado inicial como abierto
     arbol_busqueda = defaultdict(list)
-    contador = 1  # Para mantener un orden consistente en el heap
+    contador = 1  # Para mantener orden en el heap cuando hay empates
 
     while frontera:
-        _, _, current = heapq.heappop(frontera)
+        f_actual, _, current = heapq.heappop(frontera)
 
-        if current not in open_set:
+        # Si ya no está en la frontera (puede haber duplicados en el heap)
+        if current not in en_frontera:
             continue
 
-        if problema.es_objetivo(current):
-            # Reconstruir camino
-            camino = []
-            while current in came_from:
-                camino.append(current)
-                current = came_from[current]
-            camino.append(problema.estado_inicial)
-            camino.reverse()
+        en_frontera.remove(current)
 
-            # Calcular costo total correctamente
-            costo_total = sum(
-                problema.agente.costo_movimiento(problema.laberinto[e.fila][e.columna])
-                for e in camino[1:]
-            )
-            problema.costo_acumulado = costo_total
-
-            return camino, open_set, closed_set, orden_exploracion, arbol_busqueda
-
-        open_set.remove(current)
+        # Marcar como explorado
         closed_set.add(current)
         orden_exploracion.append(('cerrado', current))
 
+        # Verificar si llegamos al objetivo
+        if problema.es_objetivo(current):
+            # Reconstruir camino
+            camino = []
+            nodo_actual = current
+            while nodo_actual in came_from:
+                camino.append(nodo_actual)
+                nodo_actual = came_from[nodo_actual]
+            camino.append(problema.estado_inicial)
+            camino.reverse()
+
+            # El costo total debe ser la suma de los costos de cada movimiento en el camino
+            costo_total = 0
+            for i in range(1, len(camino)):
+                tipo_terreno = problema.laberinto[camino[i].fila][camino[i].columna]
+                costo_total += problema.agente.costo_movimiento(tipo_terreno)
+
+            problema.costo_acumulado = costo_total
+
+            return camino, en_frontera, closed_set, orden_exploracion, arbol_busqueda
+
+        # Explorar vecinos
         for accion, neighbor in problema.obtener_acciones(current):
             if neighbor in closed_set:
                 continue
 
-            tentative_g = g_score[current] + accion.costo
+            # Calcular el costo del terreno para este movimiento
+            costo_terreno = problema.agente.costo_movimiento(problema.laberinto[neighbor.fila][neighbor.columna])
 
-            if neighbor not in open_set:
-                open_set.add(neighbor)
-                orden_exploracion.append(('abierto', neighbor))
+            # Acumular el costo: g_score actual + costo del nuevo terreno
+            tentative_g = g_score[current] + costo_terreno
+
+            # Si es un nuevo nodo o encontramos un mejor camino
+            if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                # Actualizar camino y costos
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g
+                f_score = tentative_g + problema.heuristica(neighbor)
+
+                # Siempre registrar en el árbol de búsqueda cuando consideramos un vecino
                 arbol_busqueda[current].append(neighbor)
-                heapq.heappush(frontera, (tentative_g + problema.heuristica(neighbor), contador, neighbor))
-                contador += 1
-            elif tentative_g >= g_score.get(neighbor, float('inf')):
-                continue
 
-            came_from[neighbor] = current
-            g_score[neighbor] = tentative_g
-            f_score[neighbor] = tentative_g + problema.heuristica(neighbor)
+                # Si es un nuevo nodo para la frontera
+                if neighbor not in en_frontera:
+                    en_frontera.add(neighbor)
+                    orden_exploracion.append(('abierto', neighbor))
+                    heapq.heappush(frontera, (f_score, contador, neighbor))
+                    contador += 1
+                else:
+                    # Actualizar prioridad agregando una nueva entrada
+                    heapq.heappush(frontera, (f_score, contador, neighbor))
+                    contador += 1
 
-    return None, open_set, closed_set, orden_exploracion, arbol_busqueda
+    # No se encontró solución
+    return None, en_frontera, closed_set, orden_exploracion, arbol_busqueda

@@ -6,7 +6,7 @@ import networkx as nx
 from matplotlib.lines import Line2D
 from core.estado import Estado
 from core.problema import Problema
-from core.astar import a_estrella
+from core.astar import a_estrella_corregido
 from agentes.basicos import crear_monkey, crear_octopus
 from ui.pygame_ui import (
     inicializar_ui,
@@ -121,57 +121,207 @@ def seleccionar_posicion(laberinto, mensaje, agente=None):
 
 
 def visualizar_arbol_a_estrella(problema, arbol_busqueda, camino_solucion):
-    plt.figure(figsize=(25, 15))
+    plt.figure(figsize=(30, 20))  # Tamaño más grande para mejor visualización
     G = nx.DiGraph()
 
-    estilo_normal = {'edge_color': 'gray', 'width': 1, 'alpha': 0.7}
-    estilo_solucion = {'edge_color': 'red', 'width': 3, 'style': 'dashed', 'alpha': 1}
-    estilo_nodo = {'node_size': 1200, 'node_color': 'lightblue', 'alpha': 0.9}
+    # Estilos mejorados
+    estilo_normal = {'edge_color': 'gray', 'width': 1.5, 'alpha': 0.7, 'arrowsize': 20}
+    estilo_solucion = {'edge_color': '#FF4500', 'width': 4, 'style': 'dashed', 'alpha': 1, 'arrowsize': 25}
+    estilo_nodo = {'node_size': 2000, 'node_color': '#ADD8E6', 'alpha': 0.9, 'node_shape': 's'}
+    estilo_texto = {'font_size': 10, 'font_weight': 'bold', 'font_family': 'sans-serif'}
 
+    # Primero construimos el grafo sin etiquetas
     for padre, hijos in arbol_busqueda.items():
         for hijo in hijos:
-            acciones = [a for a, e in problema.obtener_acciones(padre) if e == hijo]
-            g = sum(a.costo for a in acciones) if acciones else 0
+            G.add_edge(str(padre), str(hijo))
+
+    # Calculamos los valores g (costo acumulado desde el inicio) para cada nodo
+    g_values = {}
+    g_values[str(problema.estado_inicial)] = 0  # El nodo inicial tiene costo 0
+
+    # Función recursiva para calcular g
+    def calcular_g_recursivo(nodo_actual_str):
+        if nodo_actual_str in g_values:
+            return g_values[nodo_actual_str]
+
+        # Encontrar todos los padres posibles para este nodo
+        padres = []
+        nodo_actual = None
+
+        # Primero tenemos que convertir el string a un objeto Estado
+        for estado in arbol_busqueda.keys():
+            if str(estado) == nodo_actual_str:
+                nodo_actual = estado
+                break
+
+        if nodo_actual is None:
+            # Si no encontramos el estado, buscamos entre todos los hijos
+            for padre, hijos in arbol_busqueda.items():
+                for hijo in hijos:
+                    if str(hijo) == nodo_actual_str:
+                        nodo_actual = hijo
+                        break
+                if nodo_actual:
+                    break
+
+        # Ahora buscamos todos los padres posibles
+        for padre, hijos in arbol_busqueda.items():
+            if nodo_actual in hijos:
+                padres.append(padre)
+
+        # Si no hay padres, es un nodo raíz o huérfano
+        if not padres:
+            g_values[nodo_actual_str] = float('inf')  # No debería suceder en A*
+            return float('inf')
+
+        # Elegimos el padre que da el menor g
+        min_g = float('inf')
+        for padre in padres:
+            # Calcular recursivamente el g del padre si no lo conocemos
+            g_padre = calcular_g_recursivo(str(padre))
+
+            # Costo del movimiento desde el padre hasta este nodo
+            costo_movimiento = problema.agente.costo_movimiento(
+                problema.laberinto[nodo_actual.fila][nodo_actual.columna])
+
+            # Nuevo g potencial
+            nuevo_g = g_padre + costo_movimiento
+
+            if nuevo_g < min_g:
+                min_g = nuevo_g
+
+        g_values[nodo_actual_str] = min_g
+        return min_g
+
+    # Calcular g para todos los nodos
+    for node in G.nodes():
+        if node not in g_values:
+            calcular_g_recursivo(node)
+
+    # Ahora actualizamos las aristas con la información correcta
+    for padre, hijos in arbol_busqueda.items():
+        padre_str = str(padre)
+
+        for hijo in hijos:
+            hijo_str = str(hijo)
+
+            # Obtenemos g acumulado para el nodo hijo
+            g = g_values[hijo_str]
+
+            # Calculamos h (heurística) para este nodo
             h = problema.heuristica(hijo)
+
+            # f es g + h
             f = g + h
 
-            G.add_edge(
-                str(padre),
-                str(hijo),
-                g=g,
-                h=h,
-                f=f,
-                label=f"g={g:.1f}\nh={h:.1f}\nf={f:.1f}"
-            )
+            # Formateo más limpio de las etiquetas
+            label = f"g={g:.1f}\nh={h:.1f}\nf={f:.1f}"
 
-    pos = nx.spring_layout(G, k=0.8, iterations=200, seed=42)
+            # Actualizamos la arista con esta información
+            G.edges[padre_str, hijo_str]['g'] = g
+            G.edges[padre_str, hijo_str]['h'] = h
+            G.edges[padre_str, hijo_str]['f'] = f
+            G.edges[padre_str, hijo_str]['label'] = label
 
+    # Usar un layout más organizado
+    try:
+        pos = nx.nx_agraph.graphviz_layout(G, prog='dot')  # Requiere pygraphviz
+    except:
+        # Fallback si no está instalado pygraphviz
+        pos = nx.spring_layout(G, k=0.9, iterations=100, seed=42)
+
+    # Dibujar elementos
     nx.draw_networkx_nodes(G, pos, **estilo_nodo)
-    nx.draw_networkx_labels(G, pos, font_size=8)
-    nx.draw_networkx_edges(G, pos, **estilo_normal, arrowstyle='->', arrowsize=15)
 
+    # Preparar etiquetas de nodos con información de g, h, f
+    node_labels = {}
+    for node in G.nodes():
+        # Si es un nodo hoja, no tendrá etiquetas de arista, así que calculamos los valores
+        if G.out_degree(node) == 0:
+            g = g_values[node]
+
+            # Convertir el string a objeto Estado para calcular h
+            estado_actual = None
+            for estado in arbol_busqueda.keys():
+                if str(estado) == node:
+                    estado_actual = estado
+                    break
+
+            if not estado_actual:
+                for padre, hijos in arbol_busqueda.items():
+                    for hijo in hijos:
+                        if str(hijo) == node:
+                            estado_actual = hijo
+                            break
+
+            h = problema.heuristica(estado_actual) if estado_actual else 0
+            f = g + h
+            node_labels[node] = f"{node}\ng={g:.1f}, h={h:.1f}, f={f:.1f}"
+        else:
+            # Para nodos internos, usamos la información de las aristas salientes
+            salientes = list(G.out_edges(node))
+            if salientes:
+                edge = salientes[0]
+                g = g_values[node]
+                h = G.edges[edge]['h']  # Usamos h de una arista saliente
+                f = g + h
+                node_labels[node] = f"{node}\ng={g:.1f}, h={h:.1f}, f={f:.1f}"
+            else:
+                node_labels[node] = node
+
+    nx.draw_networkx_labels(G, pos, labels=node_labels, font_size=8, font_weight='bold')
+
+    # Dibujar todas las aristas primero (normales)
+    nx.draw_networkx_edges(G, pos, **estilo_normal, arrowstyle='->')
+
+    # Resaltar camino solución si existe
     if camino_solucion:
         edges_camino = [(str(camino_solucion[i]), str(camino_solucion[i + 1]))
                         for i in range(len(camino_solucion) - 1)]
-        nx.draw_networkx_edges(G, pos, edgelist=edges_camino, **estilo_solucion, arrowstyle='->', arrowsize=20)
+        edges_validos = [(u, v) for u, v in edges_camino if G.has_edge(u, v)]
+        nx.draw_networkx_edges(G, pos, edgelist=edges_validos, **estilo_solucion, arrowstyle='->')
 
+    # Mejorar las etiquetas de las aristas
     edge_labels = nx.get_edge_attributes(G, 'label')
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=8, bbox=dict(alpha=0.7))
+    nx.draw_networkx_edge_labels(
+        G, pos,
+        edge_labels=edge_labels,
+        font_size=8,
+        bbox=dict(alpha=0.85, boxstyle='round,pad=0.2', facecolor='white', edgecolor='none')
+    )
 
+    # Leyenda más clara
     leyenda = [
-        Line2D([0], [0], color='red', linestyle='--', linewidth=3, label='Camino solución'),
-        Line2D([0], [0], color='gray', linewidth=1, label='Exploración normal'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue', markersize=10, label='Nodo')
+        Line2D([0], [0], color='#FF4500', linestyle='--', linewidth=4, label='Camino solución'),
+        Line2D([0], [0], color='gray', linewidth=2, label='Exploración normal'),
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='#ADD8E6', markersize=15, label='Nodo')
     ]
+    plt.legend(
+        handles=leyenda,
+        loc='upper right',
+        fontsize=12,
+        title="Leyenda:",
+        title_fontsize=13,
+        framealpha=0.9
+    )
 
-    plt.legend(handles=leyenda, loc='upper right')
-    plt.title("Árbol de Búsqueda A*\n(g = costo real, h = heurística, f = g + h)", fontsize=14)
+    # Título más profesional
+    plt.title("Árbol de Búsqueda A*\n(g = costo acumulado, h = heurística, f = g + h)",
+              fontsize=16, pad=20, fontweight='bold')
+
+    # Ajustes finales
     plt.axis('off')
     plt.tight_layout()
-    plt.savefig('arbol_busqueda_a_estrella.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    print("Árbol de búsqueda guardado como 'arbol_busqueda_a_estrella.png'")
 
+    # Guardar con mayor resolución y calidad
+    plt.savefig(
+        'arbol_busqueda_a_estrella_mejorado.png',
+        dpi=300,
+        bbox_inches='tight',
+        facecolor='white'
+    )
+    plt.close()
+    print("Árbol de búsqueda mejorado guardado como 'arbol_busqueda_a_estrella_mejorado.png'")
 
 def main():
     laberinto = cargar_laberinto()
@@ -191,7 +341,7 @@ def main():
     problema.mapa_visible[estado_inicial.fila][estado_inicial.columna] = 1
     problema.mapa_visible[estado_objetivo.fila][estado_objetivo.columna] = 1
 
-    camino_solucion, nodos_abiertos, nodos_cerrados, orden_exploracion, arbol_busqueda = a_estrella(problema)
+    camino_solucion, nodos_abiertos, nodos_cerrados, orden_exploracion, arbol_busqueda = a_estrella_corregido(problema)
 
     if camino_solucion is None:
         print("No se encontró solución!")
